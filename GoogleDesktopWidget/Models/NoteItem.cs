@@ -12,4 +12,4 @@ public class NotesData
 {
     public string ScratchpadMarkdown { get; set; } = string.Empty;
     public List<NoteItem> Tasks { get; set; } = new();
-}NoteItem
+}
