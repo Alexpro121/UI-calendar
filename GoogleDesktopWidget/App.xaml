@@ -3,6 +3,9 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              Startup="Application_Startup">
     <Application.Resources>
+        <!-- Global Converters -->
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
+
         <!-- Dynamic Colors: Initialized to 'Google Blue' theme -->
         <Color x:Key="ColorBackground">#121316</Color>
         <Color x:Key="ColorSurface">#1E1F22</Color>
@@ -143,4 +146,4 @@
             </Setter>
         </Style>
     </Application.Resources>
-</Application>App
+</Application>
