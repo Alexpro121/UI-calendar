@@ -1,0 +1,38 @@
+name: Build Desktop Widget
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Setup .NET 8 SDK
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: 8.0.x
+
+    - name: Build and Publish Single-File Executable
+      shell: pwsh
+      run: |
+        # Знаходимо будь-який файл .csproj у проєкті автоматично
+        $projFile = (Get-ChildItem -Filter *.csproj -Recurse | Select-Object -First 1).FullName
+        Write-Host "Found project file: $projFile"
+        
+        dotnet restore $projFile
+        dotnet publish $projFile -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true /p:IncludeNativeLibrariesForSelfExtract=true /p:DebugType=None /p:DebugSymbols=false -o ./publish
+
+    - name: Upload Finished Executable
+      uses: actions/upload-artifact@v4
+      with:
+        name: GoogleDesktopWidget-win-x64
+        path: ./publish/*.exe
+        if-no-files-found: error
