@@ -1,331 +1,349 @@
-<Window x:Class="GoogleDesktopWidget.MainWindow"
-        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Google Widget" 
-        Height="650" Width="390"
-        WindowStyle="None"
-        AllowsTransparency="True"
-        Background="Transparent"
-        ShowInTaskbar="False"
-        ResizeMode="NoResize"
-        Topmost="False"
-        FontFamily="{StaticResource M3Font}">
+using System;
+using System.Drawing;
+using System.Linq;
+using System.Threading;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Interop;
+using GoogleDesktopWidget.Interop;
+using GoogleDesktopWidget.Models;
+using GoogleDesktopWidget.Services;
+using Forms = System.Windows.Forms;
 
-    <Window.Resources>
-        <!-- Storyboard for Pulsing 'Now' indicator -->
-        <Storyboard x:Key="PulseStoryboard" RepeatBehavior="Forever" AutoReverse="True">
-            <DoubleAnimation Storyboard.TargetProperty="Opacity"
-                             From="1.0" To="0.3" Duration="0:0:1">
-                <DoubleAnimation.EasingFunction>
-                    <SineEase EasingMode="EaseInOut"/>
-                </DoubleAnimation.EasingFunction>
-            </DoubleAnimation>
-        </Storyboard>
-    </Window.Resources>
+namespace GoogleDesktopWidget
+{
+    public partial class MainWindow : Window
+    {
+        private readonly SettingsService _settingsService;
+        private readonly CalendarService _calendarService;
+        private readonly NotesService _notesService;
+        private Forms.NotifyIcon? _trayIcon;
 
-    <!-- Outer Wrapper with Shadow for Material Elevation -->
-    <Grid Margin="16">
-        <Border x:Name="RootCard"
-                CornerRadius="24"
-                Background="{DynamicResource BrushSurface}"
-                BorderBrush="{DynamicResource BrushOutline}"
-                BorderThickness="1"
-                ClipToBounds="True">
+        public MainWindow()
+        {
+            InitializeComponent();
+
+            _settingsService = new SettingsService();
+            _calendarService = new CalendarService();
+            _notesService = new NotesService();
+
+            Left = _settingsService.Settings.WindowLeft;
+            Top = _settingsService.Settings.WindowTop;
+
+            Loaded += MainWindow_Loaded;
+            SourceInitialized += MainWindow_SourceInitialized;
+            Closing += MainWindow_Closing;
+            LocationChanged += MainWindow_LocationChanged;
+
+            _calendarService.OnEventsUpdated += OnCalendarEventsUpdated;
+            _calendarService.OnSyncStateChanged += OnCalendarSyncStateChanged;
+        }
+
+        private void MainWindow_SourceInitialized(object? sender, EventArgs e)
+        {
+            IntPtr hwnd = new WindowInteropHelper(this).Handle;
+            Win32Interop.HideFromAltTab(hwnd);
+            ApplyGlassAndBackdrop();
+
+            if (_settingsService.Settings.PinToDesktop)
+            {
+                Win32Interop.SendToBottom(hwnd);
+            }
+        }
+
+        private void MainWindow_Loaded(object sender, RoutedEventArgs e)
+        {
+            InitTrayIcon();
+            ApplyStoredSettingsToUI();
+            RefreshHeaderDate();
+
+            BindTasksList();
+            ScratchpadBox.Text = _notesService.Data.ScratchpadMarkdown;
+
+            _calendarService.StartTimer(_settingsService.Settings.CalendarUrl, _settingsService.Settings.SyncIntervalMinutes);
+        }
+
+        private void MainWindow_LocationChanged(object? sender, EventArgs e)
+        {
+            _settingsService.Settings.WindowLeft = Left;
+            _settingsService.Settings.WindowTop = Top;
+            _settingsService.SaveSettings();
+        }
+
+        private void MainWindow_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
+        {
+            _trayIcon?.Dispose();
+            _notesService.SaveImmediate();
+            _settingsService.SaveSettings();
+        }
+
+        private void InitTrayIcon()
+        {
+            _trayIcon = new Forms.NotifyIcon();
             
-            <Border.Effect>
-                <DropShadowEffect BlurRadius="28" 
-                                  Color="#000000" 
-                                  Opacity="0.55" 
-                                  ShadowDepth="6" 
-                                  Direction="270" />
-            </Border.Effect>
+            using var bmp = new Bitmap(16, 16);
+            using (var g = Graphics.FromImage(bmp))
+            {
+                g.Clear(System.Drawing.Color.FromArgb(66, 133, 244));
+                g.FillEllipse(System.Drawing.Brushes.White, 3, 3, 10, 10);
+            }
+            _trayIcon.Icon = System.Drawing.Icon.FromHandle(bmp.GetHicon());
+            _trayIcon.Text = "Google Material Desktop Widget";
+            _trayIcon.Visible = true;
 
-            <Grid>
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto"/> <!-- Header / Drag Area -->
-                    <RowDefinition Height="Auto"/> <!-- Tab Segmented Bar -->
-                    <RowDefinition Height="*"/>    <!-- Content Pages -->
-                </Grid.RowDefinitions>
+            var menu = new Forms.ContextMenuStrip();
+            menu.Items.Add("Open Widget", null, (s, e) => { Show(); WindowState = WindowState.Normal; Activate(); });
+            menu.Items.Add("Refresh Calendar", null, async (s, e) => await _calendarService.RefreshCalendarAsync());
+            menu.Items.Add("Reset Position", null, (s, e) => ResetPositionButton_Click(this, new RoutedEventArgs()));
+            menu.Items.Add("-");
+            menu.Items.Add("Exit", null, (s, e) => Application.Current.Shutdown());
+            _trayIcon.ContextMenuStrip = menu;
 
-                <!-- 1. Header (Drag handle, Live Date, Actions) -->
-                <Grid Grid.Row="0" Margin="20,16,20,10" Background="Transparent" MouseLeftButtonDown="Header_MouseLeftButtonDown">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
+            _trayIcon.DoubleClick += (s, e) => { Show(); Activate(); };
+        }
 
-                    <StackPanel Orientation="Vertical">
-                        <TextBlock x:Name="HeaderDateText" 
-                                   Text="Tuesday, Sep 8" 
-                                   FontSize="18" 
-                                   FontWeight="Bold" 
-                                   Foreground="{DynamicResource BrushTextPrimary}"/>
-                        <TextBlock x:Name="SyncStatusText" 
-                                   Text="Synced with Google" 
-                                   FontSize="11" 
-                                   Foreground="{DynamicResource BrushTextSecondary}" 
-                                   Margin="0,2,0,0"/>
-                    </StackPanel>
+        private void ApplyStoredSettingsToUI()
+        {
+            Opacity = _settingsService.Settings.Opacity;
+            OpacitySlider.Value = _settingsService.Settings.Opacity;
+            AcrylicCheck.IsChecked = _settingsService.Settings.EnableAcrylic;
+            PinToDesktopCheck.IsChecked = _settingsService.Settings.PinToDesktop;
+            AutoStartCheck.IsChecked = _settingsService.Settings.AutoStart;
+            CalendarUrlBox.Text = _settingsService.Settings.CalendarUrl;
 
-                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                        <Button x:Name="SyncButton" Style="{StaticResource M3IconButton}" Click="SyncButton_Click" ToolTip="Sync Now">
-                            <TextBlock Text="🔄" FontSize="14"/>
-                        </Button>
-                        <Button Style="{StaticResource M3IconButton}" Click="SettingsNavButton_Click" ToolTip="Settings" Margin="4,0,0,0">
-                            <TextBlock Text="⚙" FontSize="15"/>
-                        </Button>
-                    </StackPanel>
-                </Grid>
+            switch (_settingsService.Settings.ThemeName)
+            {
+                case "EmeraldForest": ThemeComboBox.SelectedIndex = 1; break;
+                case "SunsetCoral": ThemeComboBox.SelectedIndex = 2; break;
+                case "AmoledBlack": ThemeComboBox.SelectedIndex = 3; break;
+                default: ThemeComboBox.SelectedIndex = 0; break;
+            }
 
-                <!-- 2. Segmented Pill Navigation -->
-                <Border Grid.Row="1" Margin="20,0,20,12" Background="{DynamicResource BrushSurfaceVariant}" CornerRadius="18" Padding="3">
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="*"/>
-                        </Grid.ColumnDefinitions>
+            App.ApplyTheme(_settingsService.Settings.ThemeName);
+        }
 
-                        <RadioButton x:Name="TabAgendaRadio" Content="Agenda" IsChecked="True" 
-                                     Checked="TabAgendaRadio_Checked"
-                                     HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
-                            <RadioButton.Template>
-                                <ControlTemplate TargetType="RadioButton">
-                                    <Border x:Name="pill" CornerRadius="15" Background="Transparent" Padding="0,7">
-                                        <TextBlock Text="{TemplateBinding Content}" 
-                                                   HorizontalAlignment="Center" 
-                                                   FontWeight="SemiBold" 
-                                                   FontSize="12"
-                                                   Foreground="{DynamicResource BrushTextSecondary}"/>
-                                    </Border>
-                                    <ControlTemplate.Triggers>
-                                        <Trigger Property="IsChecked" Value="True">
-                                            <Setter TargetName="pill" Property="Background" Value="{DynamicResource BrushPrimary}"/>
-                                            <Setter TargetName="pill" Property="TextBlock.Foreground" Value="{DynamicResource BrushOnPrimary}"/>
-                                        </Trigger>
-                                    </ControlTemplate.Triggers>
-                                </ControlTemplate>
-                            </RadioButton.Template>
-                        </RadioButton>
+        private void ApplyGlassAndBackdrop()
+        {
+            IntPtr hwnd = new WindowInteropHelper(this).Handle;
+            if (hwnd == IntPtr.Zero) return;
 
-                        <RadioButton x:Name="TabTasksRadio" Grid.Column="1" Content="Tasks &amp; Notes" 
-                                     Checked="TabTasksRadio_Checked"
-                                     HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
-                            <RadioButton.Template>
-                                <ControlTemplate TargetType="RadioButton">
-                                    <Border x:Name="pill" CornerRadius="15" Background="Transparent" Padding="0,7">
-                                        <TextBlock Text="{TemplateBinding Content}" 
-                                                   HorizontalAlignment="Center" 
-                                                   FontWeight="SemiBold" 
-                                                   FontSize="12"
-                                                   Foreground="{DynamicResource BrushTextSecondary}"/>
-                                    </Border>
-                                    <ControlTemplate.Triggers>
-                                        <Trigger Property="IsChecked" Value="True">
-                                            <Setter TargetName="pill" Property="Background" Value="{DynamicResource BrushPrimary}"/>
-                                            <Setter TargetName="pill" Property="TextBlock.Foreground" Value="{DynamicResource BrushOnPrimary}"/>
-                                        </Trigger>
-                                    </ControlTemplate.Triggers>
-                                </ControlTemplate>
-                            </RadioButton.Template>
-                        </RadioButton>
-                    </Grid>
-                </Border>
+            if (_settingsService.Settings.EnableAcrylic)
+            {
+                Win32Interop.EnableAcrylic(hwnd, 0x991E1F22);
+            }
+            else
+            {
+                Win32Interop.DisableAcrylic(hwnd);
+            }
+        }
 
-                <!-- 3. Dynamic Content Hosts -->
-                <Grid Grid.Row="2" Margin="16,0,16,16">
+        private void RefreshHeaderDate()
+        {
+            HeaderDateText.Text = DateTime.Now.ToString("dddd, MMM d");
+        }
 
-                    <!-- PAGE 1: AGENDA -->
-                    <ScrollViewer x:Name="AgendaView" VerticalScrollBarVisibility="Auto">
-                        <StackPanel x:Name="AgendaContainer">
-                            <!-- Currently Active Event Highlight Card -->
-                            <Border x:Name="ActiveEventCard" Visibility="Collapsed" 
-                                    Background="{DynamicResource BrushPrimaryContainer}" 
-                                    CornerRadius="16" Padding="14" Margin="0,0,0,12"
-                                    BorderBrush="{DynamicResource BrushAccent}" BorderThickness="1">
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto"/>
-                                        <ColumnDefinition Width="*"/>
-                                    </Grid.ColumnDefinitions>
-                                    <Ellipse Width="10" Height="10" Fill="{DynamicResource BrushAccent}" 
-                                             VerticalAlignment="Top" Margin="0,4,12,0">
-                                        <Ellipse.Triggers>
-                                            <EventTrigger RoutedEvent="Loaded">
-                                                <BeginStoryboard Storyboard="{StaticResource PulseStoryboard}"/>
-                                            </EventTrigger>
-                                        </Ellipse.Triggers>
-                                    </Ellipse>
-                                    <StackPanel Grid.Column="1">
-                                        <TextBlock Text="NOW HAPPENING" FontSize="10" FontWeight="Bold" Foreground="{DynamicResource BrushAccent}"/>
-                                        <TextBlock x:Name="ActiveEventTitle" Text="Standup Meeting" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextPrimary}" Margin="0,2,0,0"/>
-                                        <TextBlock x:Name="ActiveEventTime" Text="14:00 - 14:30" FontSize="12" Foreground="{DynamicResource BrushTextSecondary}" Margin="0,2,0,0"/>
-                                    </StackPanel>
-                                </Grid>
-                            </Border>
+        private void Header_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (e.ButtonState == MouseButtonState.Pressed)
+            {
+                DragMove();
+            }
+        }
 
-                            <!-- Items List -->
-                            <ItemsControl x:Name="EventsItemsControl">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <Border Margin="0,0,0,8" Background="{DynamicResource BrushSurfaceVariant}" 
-                                                CornerRadius="14" Padding="12"
-                                                MouseLeftButtonUp="EventCard_Click" Cursor="Hand">
-                                            <StackPanel>
-                                                <Grid>
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="*"/>
-                                                        <ColumnDefinition Width="Auto"/>
-                                                    </Grid.ColumnDefinitions>
-                                                    <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="13" 
-                                                               Foreground="{DynamicResource BrushTextPrimary}" TextTrimming="CharacterEllipsis"/>
-                                                    <Border Grid.Column="1" Background="{DynamicResource BrushOutline}" CornerRadius="8" Padding="6,2">
-                                                        <TextBlock Text="{Binding RelativeTimeStatus}" FontSize="10" Foreground="{DynamicResource BrushTextPrimary}"/>
-                                                    </Border>
-                                                </Grid>
-                                                
-                                                <TextBlock Text="{Binding DisplayTimeRange}" FontSize="11" 
-                                                           Foreground="{DynamicResource BrushTextSecondary}" Margin="0,4,0,0"/>
+        private void OnCalendarEventsUpdated()
+        {
+            Dispatcher.Invoke(() =>
+            {
+                var active = _calendarService.Events.FirstOrDefault(ev => ev.IsActiveNow);
+                if (active != null)
+                {
+                    ActiveEventCard.Visibility = Visibility.Visible;
+                    ActiveEventTitle.Text = active.Title;
+                    ActiveEventTime.Text = active.DisplayTimeRange;
+                }
+                else
+                {
+                    ActiveEventCard.Visibility = Visibility.Collapsed;
+                }
 
-                                                <!-- Expandable details -->
-                                                <StackPanel Visibility="{Binding IsExpanded, Converter={StaticResource BoolToVis}}" Margin="0,8,0,0">
-                                                    <TextBlock Text="{Binding Location}" FontSize="11" Foreground="{DynamicResource BrushPrimary}" Margin="0,0,0,4" TextWrapping="Wrap"/>
-                                                    <TextBlock Text="{Binding Description}" FontSize="11" Foreground="{DynamicResource BrushTextSecondary}" TextWrapping="Wrap"/>
-                                                </StackPanel>
-                                            </StackPanel>
-                                        </Border>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
+                EventsItemsControl.ItemsSource = null;
+                EventsItemsControl.ItemsSource = _calendarService.Events;
 
-                            <!-- Empty Placeholder -->
-                            <TextBlock x:Name="AgendaEmptyState" Text="No upcoming events. Enter iCal URL in Settings." 
-                                       Foreground="{DynamicResource BrushTextSecondary}" FontSize="12" 
-                                       HorizontalAlignment="Center" Margin="0,40,0,0" Visibility="Collapsed" TextAlignment="Center"/>
-                        </StackPanel>
-                    </ScrollViewer>
+                AgendaEmptyState.Visibility = _calendarService.Events.Count == 0 
+                    ? Visibility.Visible 
+                    : Visibility.Collapsed;
+            });
+        }
 
-                    <!-- PAGE 2: TASKS & SCRATCHPAD -->
-                    <Grid x:Name="TasksNotesView" Visibility="Collapsed">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="*"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="120"/>
-                        </Grid.RowDefinitions>
+        private void OnCalendarSyncStateChanged(bool isSyncing)
+        {
+            Dispatcher.Invoke(() =>
+            {
+                SyncStatusText.Text = isSyncing ? "Syncing events..." : "Updated just now";
+            });
+        }
 
-                        <!-- Task Add Input -->
-                        <Grid Grid.Row="0" Margin="0,0,0,10">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <TextBox x:Name="NewTaskBox" Style="{StaticResource M3TextBox}" KeyDown="NewTaskBox_KeyDown"/>
-                            <Button Grid.Column="1" Style="{StaticResource M3PillButton}" Content="Add" Margin="8,0,0,0" Click="AddTaskButton_Click"/>
-                        </Grid>
+        private async void SyncButton_Click(object sender, RoutedEventArgs e)
+        {
+            await _calendarService.RefreshCalendarAsync();
+        }
 
-                        <!-- Tasks List -->
-                        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Margin="0,0,0,10">
-                            <ItemsControl x:Name="TasksItemsControl">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <Border Margin="0,0,0,6" Background="{DynamicResource BrushSurfaceVariant}" CornerRadius="10" Padding="8">
-                                            <Grid>
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="Auto"/>
-                                                    <ColumnDefinition Width="*"/>
-                                                    <ColumnDefinition Width="Auto"/>
-                                                </Grid.ColumnDefinitions>
-                                                <CheckBox IsChecked="{Binding IsCompleted}" VerticalAlignment="Center" Click="TaskCheckBox_Click" Tag="{Binding Id}"/>
-                                                <TextBlock Grid.Column="1" Text="{Binding Content}" VerticalAlignment="Center" Margin="8,0"
-                                                           Foreground="{DynamicResource BrushTextPrimary}" FontSize="12" TextTrimming="CharacterEllipsis">
-                                                    <TextBlock.Style>
-                                                        <Style TargetType="TextBlock">
-                                                            <Style.Triggers>
-                                                                <DataTrigger Binding="{Binding IsCompleted}" Value="True">
-                                                                    <Setter Property="TextDecorations" Value="Strikethrough"/>
-                                                                    <Setter Property="Opacity" Value="0.45"/>
-                                                                </DataTrigger>
-                                                            </Style.Triggers>
-                                                        </Style>
-                                                    </TextBlock.Style>
-                                                </TextBlock>
-                                                <Button Grid.Column="2" Style="{StaticResource M3IconButton}" Width="24" Height="24" 
-                                                        Click="DeleteTaskButton_Click" Tag="{Binding Id}">
-                                                    <TextBlock Text="✕" FontSize="10"/>
-                                                </Button>
-                                            </Grid>
-                                        </Border>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                        </ScrollViewer>
+        private void EventCard_Click(object sender, MouseButtonEventArgs e)
+        {
+            if (sender is FrameworkElement { DataContext: CalendarEvent item })
+            {
+                item.IsExpanded = !item.IsExpanded;
+                EventsItemsControl.Items.Refresh();
+            }
+        }
 
-                        <!-- Scratchpad Title -->
-                        <TextBlock Grid.Row="2" Text="Scratchpad (Auto-saved)" FontSize="11" FontWeight="SemiBold" 
-                                   Foreground="{DynamicResource BrushTextSecondary}" Margin="0,0,0,4"/>
+        private void TabAgendaRadio_Checked(object sender, RoutedEventArgs e)
+        {
+            if (AgendaView == null || TasksNotesView == null) return;
+            AgendaView.Visibility = Visibility.Visible;
+            TasksNotesView.Visibility = Visibility.Collapsed;
+        }
 
-                        <!-- Scratchpad Editor -->
-                        <TextBox Grid.Row="3" x:Name="ScratchpadBox" 
-                                 Style="{StaticResource M3TextBox}" 
-                                 AcceptsReturn="True" 
-                                 TextWrapping="Wrap" 
-                                 VerticalScrollBarVisibility="Auto"
-                                 TextChanged="ScratchpadBox_TextChanged"/>
-                    </Grid>
+        private void TabTasksRadio_Checked(object sender, RoutedEventArgs e)
+        {
+            if (AgendaView == null || TasksNotesView == null) return;
+            AgendaView.Visibility = Visibility.Collapsed;
+            TasksNotesView.Visibility = Visibility.Visible;
+        }
 
-                    <!-- MODAL / DRAWER: SETTINGS -->
-                    <Border x:Name="SettingsModal" Background="{DynamicResource BrushSurface}" CornerRadius="20" 
-                            BorderBrush="{DynamicResource BrushOutline}" BorderThickness="1"
-                            Visibility="Collapsed" Padding="16">
-                        <ScrollViewer VerticalScrollBarVisibility="Auto">
-                            <StackPanel>
-                                <Grid Margin="0,0,0,12">
-                                    <TextBlock Text="Widget Settings" FontSize="16" FontWeight="Bold" Foreground="{DynamicResource BrushTextPrimary}"/>
-                                    <Button HorizontalAlignment="Right" Style="{StaticResource M3IconButton}" Click="CloseSettingsButton_Click">
-                                        <TextBlock Text="✕" FontSize="12"/>
-                                    </Button>
-                                </Grid>
+        private void BindTasksList()
+        {
+            TasksItemsControl.ItemsSource = null;
+            TasksItemsControl.ItemsSource = _notesService.Data.Tasks;
+        }
 
-                                <!-- Theme Chooser -->
-                                <TextBlock Text="Material Theme Accent" FontSize="12" Foreground="{DynamicResource BrushTextSecondary}" Margin="0,4,0,4"/>
-                                <ComboBox x:Name="ThemeComboBox" SelectionChanged="ThemeComboBox_SelectionChanged" Margin="0,0,0,12">
-                                    <ComboBoxItem Content="Google Blue" IsSelected="True"/>
-                                    <ComboBoxItem Content="Emerald Forest"/>
-                                    <ComboBoxItem Content="Sunset Coral"/>
-                                    <ComboBoxItem Content="AMOLED True Black"/>
-                                </ComboBox>
+        private void AddTaskButton_Click(object sender, RoutedEventArgs e)
+        {
+            SubmitTask();
+        }
 
-                                <!-- Opacity Slider -->
-                                <TextBlock Text="Surface Transparency" FontSize="12" Foreground="{DynamicResource BrushTextSecondary}" Margin="0,4,0,4"/>
-                                <Slider x:Name="OpacitySlider" Minimum="0.2" Maximum="1.0" Value="0.94" 
-                                        ValueChanged="OpacitySlider_ValueChanged" Margin="0,0,0,12"/>
+        private void NewTaskBox_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key == Key.Enter)
+            {
+                SubmitTask();
+            }
+        }
 
-                                <!-- Toggles -->
-                                <CheckBox x:Name="AcrylicCheck" Content="Windows 11 Acrylic Blur" 
-                                          Foreground="{DynamicResource BrushTextPrimary}" Margin="0,0,0,8" 
-                                          Click="AcrylicCheck_Click"/>
-                                <CheckBox x:Name="PinToDesktopCheck" Content="Pin to Desktop (Send to Back)" 
-                                          Foreground="{DynamicResource BrushTextPrimary}" Margin="0,0,0,8" 
-                                          Click="PinToDesktopCheck_Click"/>
-                                <CheckBox x:Name="AutoStartCheck" Content="Start with Windows" 
-                                          Foreground="{DynamicResource BrushTextPrimary}" Margin="0,0,0,14" 
-                                          Click="AutoStartCheck_Click"/>
+        private void SubmitTask()
+        {
+            string text = NewTaskBox.Text.Trim();
+            if (!string.IsNullOrEmpty(text))
+            {
+                _notesService.AddTask(text);
+                NewTaskBox.Text = string.Empty;
+                BindTasksList();
+            }
+        }
 
-                                <!-- iCal URL -->
-                                <TextBlock Text="Google Calendar iCal (.ics) URL" FontSize="12" Foreground="{DynamicResource BrushTextSecondary}" Margin="0,4,0,4"/>
-                                <TextBox x:Name="CalendarUrlBox" Style="{StaticResource M3TextBox}" Margin="0,0,0,8"/>
+        private void TaskCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is CheckBox { Tag: string taskId })
+            {
+                _notesService.ToggleTask(taskId);
+                BindTasksList();
+            }
+        }
 
-                                <!-- Buttons -->
-                                <Button Content="Save &amp; Sync Calendar" Style="{StaticResource M3PillButton}" Click="SaveSettingsButton_Click" Margin="0,4,0,8"/>
-                                <Button Content="Reset Widget Position" Background="{DynamicResource BrushSurfaceVariant}" 
-                                        Foreground="{DynamicResource BrushTextPrimary}" Style="{StaticResource M3PillButton}" 
-                                        Click="ResetPositionButton_Click"/>
-                            </StackPanel>
-                        </ScrollViewer>
-                    </Border>
+        private void DeleteTaskButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button { Tag: string taskId })
+            {
+                _notesService.DeleteTask(taskId);
+                BindTasksList();
+            }
+        }
 
-                </Grid>
-            </Grid>
-        </Border>
-    </Grid>
-</Window>
+        private void ScratchpadBox_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            _notesService.UpdateScratchpad(ScratchpadBox.Text);
+        }
+
+        private void SettingsNavButton_Click(object sender, RoutedEventArgs e)
+        {
+            SettingsModal.Visibility = Visibility.Visible;
+        }
+
+        private void CloseSettingsButton_Click(object sender, RoutedEventArgs e)
+        {
+            SettingsModal.Visibility = Visibility.Collapsed;
+        }
+
+        private void ThemeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (ThemeComboBox.SelectedItem is ComboBoxItem item)
+            {
+                string chosen = item.Content.ToString() switch
+                {
+                    "Emerald Forest" => "EmeraldForest",
+                    "Sunset Coral" => "SunsetCoral",
+                    "AMOLED True Black" => "AmoledBlack",
+                    _ => "GoogleBlue"
+                };
+
+                _settingsService.Settings.ThemeName = chosen;
+                App.ApplyTheme(chosen);
+                _settingsService.SaveSettings();
+            }
+        }
+
+        private void OpacitySlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            Opacity = e.NewValue;
+            _settingsService.Settings.Opacity = e.NewValue;
+            _settingsService.SaveSettings();
+        }
+
+        private void AcrylicCheck_Click(object sender, RoutedEventArgs e)
+        {
+            _settingsService.Settings.EnableAcrylic = AcrylicCheck.IsChecked ?? true;
+            _settingsService.SaveSettings();
+            ApplyGlassAndBackdrop();
+        }
+
+        private void PinToDesktopCheck_Click(object sender, RoutedEventArgs e)
+        {
+            bool pin = PinToDesktopCheck.IsChecked ?? false;
+            _settingsService.Settings.PinToDesktop = pin;
+            _settingsService.SaveSettings();
+
+            IntPtr hwnd = new WindowInteropHelper(this).Handle;
+            if (pin)
+            {
+                Win32Interop.SendToBottom(hwnd);
+            }
+        }
+
+        private void AutoStartCheck_Click(object sender, RoutedEventArgs e)
+        {
+            bool autoStart = AutoStartCheck.IsChecked ?? false;
+            _settingsService.Settings.AutoStart = autoStart;
+            _settingsService.SaveSettings();
+        }
+
+        private async void SaveSettingsButton_Click(object sender, RoutedEventArgs e)
+        {
+            _settingsService.Settings.CalendarUrl = CalendarUrlBox.Text.Trim();
+            _settingsService.SaveSettings();
+
+            SettingsModal.Visibility = Visibility.Collapsed;
+            _calendarService.StartTimer(_settingsService.Settings.CalendarUrl, _settingsService.Settings.SyncIntervalMinutes);
+            await _calendarService.RefreshCalendarAsync();
+        }
+
+        private void ResetPositionButton_Click(object sender, RoutedEventArgs e)
+        {
+            Left = 100;
+            Top = 100;
+            _settingsService.Settings.WindowLeft = 100;
+            _settingsService.Settings.WindowTop = 100;
+            _settingsService.SaveSettings();
+        }
+    }
+}
