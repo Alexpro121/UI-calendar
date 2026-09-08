@@ -187,7 +187,7 @@
                                                            Foreground="{DynamicResource BrushTextSecondary}" Margin="0,4,0,0"/>
 
                                                 <!-- Expandable details -->
-                                                <StackPanel Visibility="{Binding IsExpanded, Converter={x:Static BooleanToVisibilityConverter.Instance}}" Margin="0,8,0,0">
+                                                <StackPanel Visibility="{Binding IsExpanded, Converter={StaticResource BoolToVis}}" Margin="0,8,0,0">
                                                     <TextBlock Text="{Binding Location}" FontSize="11" Foreground="{DynamicResource BrushPrimary}" Margin="0,0,0,4" TextWrapping="Wrap"/>
                                                     <TextBlock Text="{Binding Description}" FontSize="11" Foreground="{DynamicResource BrushTextSecondary}" TextWrapping="Wrap"/>
                                                 </StackPanel>
