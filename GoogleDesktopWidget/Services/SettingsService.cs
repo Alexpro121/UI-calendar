@@ -92,4 +92,4 @@ public class SettingsService
             // Registry write permissions fallback
         }
     }
-}SettingsService
+}
