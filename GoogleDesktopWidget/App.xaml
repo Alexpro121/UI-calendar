@@ -1,1 +1,146 @@
-App
+<Application x:Class="GoogleDesktopWidget.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Startup="Application_Startup">
+    <Application.Resources>
+        <!-- Dynamic Colors: Initialized to 'Google Blue' theme -->
+        <Color x:Key="ColorBackground">#121316</Color>
+        <Color x:Key="ColorSurface">#1E1F22</Color>
+        <Color x:Key="ColorSurfaceVariant">#2B2D31</Color>
+        <Color x:Key="ColorPrimary">#8AB4F8</Color>
+        <Color x:Key="ColorOnPrimary">#00315B</Color>
+        <Color x:Key="ColorPrimaryContainer">#1A2B4C</Color>
+        <Color x:Key="ColorAccent">#4285F4</Color>
+        <Color x:Key="ColorTextPrimary">#E3E3E3</Color>
+        <Color x:Key="ColorTextSecondary">#9AA0A6</Color>
+        <Color x:Key="ColorOutline">#3C4043</Color>
+        <Color x:Key="ColorSuccess">#81C995</Color>
+
+        <!-- Dynamic Brushes -->
+        <SolidColorBrush x:Key="BrushBackground" Color="{DynamicResource ColorBackground}" />
+        <SolidColorBrush x:Key="BrushSurface" Color="{DynamicResource ColorSurface}" />
+        <SolidColorBrush x:Key="BrushSurfaceVariant" Color="{DynamicResource ColorSurfaceVariant}" />
+        <SolidColorBrush x:Key="BrushPrimary" Color="{DynamicResource ColorPrimary}" />
+        <SolidColorBrush x:Key="BrushOnPrimary" Color="{DynamicResource ColorOnPrimary}" />
+        <SolidColorBrush x:Key="BrushPrimaryContainer" Color="{DynamicResource ColorPrimaryContainer}" />
+        <SolidColorBrush x:Key="BrushAccent" Color="{DynamicResource ColorAccent}" />
+        <SolidColorBrush x:Key="BrushTextPrimary" Color="{DynamicResource ColorTextPrimary}" />
+        <SolidColorBrush x:Key="BrushTextSecondary" Color="{DynamicResource ColorTextSecondary}" />
+        <SolidColorBrush x:Key="BrushOutline" Color="{DynamicResource ColorOutline}" />
+        <SolidColorBrush x:Key="BrushSuccess" Color="{DynamicResource ColorSuccess}" />
+
+        <!-- Typography -->
+        <FontFamily x:Key="M3Font">Segoe UI Variable Text, Segoe UI, Roboto, sans-serif</FontFamily>
+
+        <!-- Material 3 Rounded Button -->
+        <Style x:Key="M3PillButton" TargetType="Button">
+            <Setter Property="FontFamily" Value="{StaticResource M3Font}" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{DynamicResource BrushOnPrimary}" />
+            <Setter Property="Background" Value="{DynamicResource BrushPrimary}" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="16,8" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="border"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="18"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="border" Property="Opacity" Value="0.88"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="border" Property="Opacity" Value="0.75"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- IconButton Style -->
+        <Style x:Key="M3IconButton" TargetType="Button">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Foreground" Value="{DynamicResource BrushTextSecondary}" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Width" Value="32" />
+            <Setter Property="Height" Value="32" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bg" Background="{TemplateBinding Background}" CornerRadius="16">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bg" Property="Background" Value="{DynamicResource BrushSurfaceVariant}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource BrushTextPrimary}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Custom Smooth ScrollViewer -->
+        <Style TargetType="ScrollBar">
+            <Setter Property="Width" Value="6" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ScrollBar">
+                        <Track x:Name="PART_Track" IsDirectionReversed="True">
+                            <Track.Thumb>
+                                <Thumb>
+                                    <Thumb.Template>
+                                        <ControlTemplate TargetType="Thumb">
+                                            <Border Background="{DynamicResource BrushOutline}" CornerRadius="3" />
+                                        </ControlTemplate>
+                                    </Thumb.Template>
+                                </Thumb>
+                            </Track.Thumb>
+                        </Track>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Modern Outlined TextBox -->
+        <Style x:Key="M3TextBox" TargetType="TextBox">
+            <Setter Property="FontFamily" Value="{StaticResource M3Font}"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Foreground" Value="{DynamicResource BrushTextPrimary}"/>
+            <Setter Property="Background" Value="{DynamicResource BrushSurfaceVariant}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BrushOutline}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="12,8"/>
+            <Setter Property="CaretBrush" Value="{DynamicResource BrushPrimary}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <Border x:Name="boxBorder" 
+                                CornerRadius="10"
+                                Background="{TemplateBinding Background}" 
+                                BorderBrush="{TemplateBinding BorderBrush}" 
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                Padding="{TemplateBinding Padding}">
+                            <ScrollViewer x:Name="PART_ContentHost"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsFocused" Value="True">
+                                <Setter TargetName="boxBorder" Property="BorderBrush" Value="{DynamicResource BrushPrimary}"/>
+                                <Setter TargetName="boxBorder" Property="BorderThickness" Value="1.5"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Application.Resources>
+</Application>App
